@@ -26,7 +26,7 @@ library("haven")
 library("labelled")
 library("writexl")
 #usethis::create_github_token()
-## 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
+## 
 
 #### V-DEM data: # show temporal coverage
 rm(list=ls())
