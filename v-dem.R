@@ -25,9 +25,6 @@ library("usethis")
 library("haven")
 library("labelled")
 library("writexl")
-#usethis::create_github_token()
-## 
-
 #### V-DEM data: # show temporal coverage
 rm(list=ls())
 `V-Dem-CY-Full+Others-v15` <- read_dta("H:/TWIN4DEM/V-Dem-CY-Full+Others-v15.dta")
