@@ -11,6 +11,9 @@
 # install.packages("haven")
 # install.packages("labelled")
 # install.packages("writexl")
+# install.packages("openxlsx")
+
+
 
 library(usethis)
 library("tidyr")
@@ -24,16 +27,19 @@ library("usethis")
 library("haven")
 library("labelled")
 library("writexl")
+library(readxl)
+library(openxlsx)
 #### V-DEM data: # show temporal coverage
 rm(list=ls())
 `V-Dem-CY-Full+Others-v15` <- read_dta("H:/TWIN4DEM/V-Dem-CY-Full+Others-v15.dta")
 
-# attr(`V-Dem-CY-Full+Others-v15`$v2exbribe, "label")
+#attr(`V-Dem-CY-Full+Others-v15`$v2exbribe, "label")
 
-# Filtering CZ, FR, NL, and HU data only
+### Filtering CZ, FR, NL, and HU data only
 filtered_vdem_data <- `V-Dem-CY-Full+Others-v15` %>%
   filter(country_id %in% c(157, 76, 91, 210))
 
+### Relevant variables per excel sheet 
 # relevant variables: Executive
 relevant_vars_ex <- names(filtered_vdem_data)[
   grepl("^v2ex", names(filtered_vdem_data)) &       # starts with "v2ex"
@@ -55,13 +61,13 @@ relevant_vars_ju <- names(filtered_vdem_data)[startsWith(names(filtered_vdem_dat
 relevant_vars_dem <- names(filtered_vdem_data)[startsWith(names(filtered_vdem_data), "v2x_")]
 
 
-# Country lookup
+###  Country lookup
 country_lookup <- data.frame(
   country_id = c(157, 76, 91, 210),
   country = c("Czech Republic", "France", "Netherlands", "Hungary")
 )
 
-# Filter 
+### Filter  time frame
 # EX
 filtered_data_ex <- `V-Dem-CY-Full+Others-v15` %>%
   filter(country_id %in% country_lookup$country_id, year >= 2000, year <= 2024) %>%
@@ -97,7 +103,7 @@ filtered_data_dem <- `V-Dem-CY-Full+Others-v15` %>%
   left_join(country_lookup, by = "country_id") %>%
   select(country, year, all_of(relevant_vars_dem))
 
-# Clean column types for relevant variables
+### Clean column types for relevant variables
 # Ex
 cleaned_data_ex <- filtered_data_ex %>%
   mutate(across(all_of(relevant_vars_ex), as.character)) 
@@ -116,7 +122,7 @@ cleaned_data_ju <- filtered_data_ju %>%
 cleaned_data_dem <- filtered_data_dem %>%
   mutate(across(all_of(relevant_vars_dem), as.character)) 
 
-# Pivot longer
+### Pivot longer
 # Ex
 long_data_ex <- cleaned_data_ex %>%
   pivot_longer(
@@ -162,7 +168,7 @@ long_data_dem <- cleaned_data_dem %>%
   ) %>%
   arrange(country, variable, year)
 
-# Summary Table, variables as rows
+### Summary Table, variables as rows
 # Ex
 summary_table_ex <- long_data_ex %>%
   filter(!is.na(value) & value != "") %>%  # Keep only non-missing values
@@ -213,7 +219,7 @@ summary_table_dem <- long_data_dem %>%
   ) %>%
   arrange(country, variable)
 
-# Adding labels
+### Adding labels
 var_labels <- var_label(`V-Dem-CY-Full+Others-v15`)  # this keeps names and labels
 labels_df <- data.frame(
   variable = names(var_labels),
@@ -246,14 +252,7 @@ summary_table_dem <- summary_table_dem %>%
   left_join(labels_df, by = "variable") %>%
   select(country, variable, label, years_available)
 
-#summary_table_wide <- summary_table %>%
-#  select(country, variable, label, years_available) %>%
-#  pivot_wider(
-#    names_from = country,
-#    values_from = years_available
-#  ) %>%
-#  arrange(variable)
-
+### Wide
 # Ex
 summary_table_wide_ex <- summary_table_ex %>%
   select(country, variable, label, years_available) %>%
@@ -382,9 +381,33 @@ summary_table_wide_dem <- summary_table_dem %>%
   ))
 
 
+### merge with question text excel
+# Ex
+question_texts_ex <- read_excel("H:/TWIN4DEM/v-dem question texts.xlsx", sheet = "Executive")
+
+summary_table_wide_ex <- summary_table_wide_ex %>%
+  left_join(
+    question_texts_ex %>% select(variable, question),
+    by = "variable"
+  ) %>%
+  relocate(question, .after = label)
+
+# Reg
+question_texts_reg <- read_excel("H:/TWIN4DEM/v-dem question texts.xlsx", sheet = "Regime")
+
+summary_table_wide_reg <- summary_table_wide_reg %>%
+  left_join(
+    question_texts_reg %>% select(variable, question),
+    by = "variable"
+  ) %>%
+  relocate(question, .after = label)
 
 
-# Writing into Excel Table
+
+
+
+
+### Writing into Excel Table
 write_xlsx(
   list(Executive = summary_table_wide_ex, 
        Regime = summary_table_wide_reg,
@@ -394,3 +417,29 @@ write_xlsx(
   path = "H:/TWIN4DEM/v-dem.xlsx"
 )
 
+### Writing into excel table
+# Create a new workbook
+wb <- createWorkbook()
+
+# List of all sheets and data frames
+sheet_list <- list(
+  Executive = summary_table_wide_ex,
+  Regime = summary_table_wide_reg,
+  Legislature = summary_table_wide_leg,
+  Judiciary = summary_table_wide_ju,
+  `Democracy Indices (V-Dem)` = summary_table_wide_dem
+)
+
+# Loop through each sheet and add to workbook
+for (sheet_name in names(sheet_list)) {
+  df <- sheet_list[[sheet_name]]
+  
+  addWorksheet(wb, sheet_name)
+  writeData(wb, sheet = sheet_name, x = df)
+  
+  # Auto-adjust column widths
+  setColWidths(wb, sheet = sheet_name, cols = 1:ncol(df), widths = "auto")
+}
+
+# Save the workbook
+saveWorkbook(wb, "H:/TWIN4DEM/v-dem.xlsx", overwrite = TRUE)
