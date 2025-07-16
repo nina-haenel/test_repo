@@ -402,22 +402,51 @@ summary_table_wide_reg <- summary_table_wide_reg %>%
   ) %>%
   relocate(question, .after = label)
 
+# Leg
+question_texts_leg <- read_excel("H:/TWIN4DEM/v-dem question texts.xlsx", sheet = "Legislature")
 
+summary_table_wide_leg <- summary_table_wide_leg %>%
+  left_join(
+    question_texts_leg %>% select(variable, question),
+    by = "variable"
+  ) %>%
+  relocate(question, .after = label)
+
+# Ju
+question_texts_ju <- read_excel("H:/TWIN4DEM/v-dem question texts.xlsx", sheet = "Judiciary")
+
+summary_table_wide_ju <- summary_table_wide_ju %>%
+  left_join(
+    question_texts_ju %>% select(variable, question),
+    by = "variable"
+  ) %>%
+  relocate(question, .after = label)
+
+
+# Dem
+question_texts_dem <- read_excel("H:/TWIN4DEM/v-dem question texts.xlsx", sheet = "Democracy Indices (V-Dem)")
+
+summary_table_wide_dem <- summary_table_wide_dem %>%
+  left_join(
+    question_texts_dem %>% select(variable, question),
+    by = "variable"
+  ) %>%
+  relocate(question, .after = label)
 
 
 
 
 ### Writing into Excel Table
-write_xlsx(
-  list(Executive = summary_table_wide_ex, 
-       Regime = summary_table_wide_reg,
-       Legislature = summary_table_wide_leg,
-       Judiciary = summary_table_wide_ju,
-       'Democracy Indices (V-Dem)' = summary_table_wide_dem),
-  path = "H:/TWIN4DEM/v-dem.xlsx"
-)
+# write_xlsx(
+#   list(Executive = summary_table_wide_ex, 
+#        Regime = summary_table_wide_reg,
+#        Legislature = summary_table_wide_leg,
+#        Judiciary = summary_table_wide_ju,
+#        'Democracy Indices (V-Dem)' = summary_table_wide_dem),
+#   path = "H:/TWIN4DEM/v-dem.xlsx"
+# )
 
-### Writing into excel table
+### Writing into excel table, adjustable format
 # Create a new workbook
 wb <- createWorkbook()
 
@@ -441,5 +470,5 @@ for (sheet_name in names(sheet_list)) {
   setColWidths(wb, sheet = sheet_name, cols = 1:ncol(df), widths = "auto")
 }
 
-# Save the workbook
+# Save workbook
 saveWorkbook(wb, "H:/TWIN4DEM/v-dem.xlsx", overwrite = TRUE)
