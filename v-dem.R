@@ -31,444 +31,91 @@ library(readxl)
 library(openxlsx)
 #### V-DEM data: # show temporal coverage
 rm(list=ls())
-`V-Dem-CY-Full+Others-v15` <- read_dta("H:/TWIN4DEM/V-Dem-CY-Full+Others-v15.dta")
-
-#attr(`V-Dem-CY-Full+Others-v15`$v2exbribe, "label")
-
-### Filtering CZ, FR, NL, and HU data only
-filtered_vdem_data <- `V-Dem-CY-Full+Others-v15` %>%
-  filter(country_id %in% c(157, 76, 91, 210))
-
-### Relevant variables per excel sheet 
-# relevant variables: Executive
-relevant_vars_ex <- names(filtered_vdem_data)[
-  grepl("^v2ex", names(filtered_vdem_data)) &       # starts with "v2ex"
-    !grepl("^v2exl", names(filtered_vdem_data))       # does NOT start with "v2exl"
-]
-
-# relevant variables: Regime
-relevant_vars_reg <- names(filtered_vdem_data)[startsWith(names(filtered_vdem_data), "v2reg")]
-
-# relevant variables: Legislature
-relevant_vars_leg <- names(filtered_vdem_data)[startsWith(names(filtered_vdem_data), "v2lg")]
-
-# relevant variables: Judiciary
-relevant_vars_ju <- names(filtered_vdem_data)[startsWith(names(filtered_vdem_data), "v2ju")]
-
-# relevant variables: Political Parties
-
-# relevant variables: v-dem high- ,and mid-level democracy indices
-relevant_vars_dem <- names(filtered_vdem_data)[startsWith(names(filtered_vdem_data), "v2x_")]
 
 
-###  Country lookup
+#### trial to automate
+variable_groups <- list(
+  Executive = list(prefix = "^v2ex(?!l)", sheet = "Executive"),  # exclude "v2exl"
+  Regime = list(prefix = "^v2reg", sheet = "Regime"),
+  Legislature = list(prefix = "^v2lg", sheet = "Legislature"),
+  Judiciary = list(prefix = "^v2ju", sheet = "Judiciary"),
+  `Democracy Indices (V-Dem)` = list(prefix = "^v2x_", sheet = "Democracy Indices (V-Dem)")
+)
+process_group <- function(prefix, sheet_name, data, labels_df, country_lookup) {
+  
+  # Select relevant variables
+  relevant_vars <- names(data)[grepl(prefix, names(data), perl = TRUE)]
+  
+  # Filter and clean
+  filtered <- data %>%
+    filter(country_id %in% country_lookup$country_id, year >= 2000, year <= 2024) %>%
+    select(country_id, country_name, year, all_of(relevant_vars)) %>%
+    left_join(country_lookup, by = "country_id") %>%
+    select(country, year, all_of(relevant_vars)) %>%
+    mutate(across(all_of(relevant_vars), as.character))
+  
+  # Pivot longer
+  long <- filtered %>%
+    pivot_longer(cols = all_of(relevant_vars), names_to = "variable", values_to = "value") %>%
+    filter(!is.na(value) & value != "") %>%
+    arrange(country, variable, year)
+  
+  # Summarize
+  summary <- long %>%
+    group_by(country, variable) %>%
+    summarise(years_available = paste(sort(unique(year)), collapse = ", "), .groups = "drop") %>%
+    arrange(country, variable) %>%
+    left_join(labels_df, by = "variable") %>%
+    select(country, variable, label, years_available)
+  
+  # Pivot wider and shorten full ranges
+  summary_wide <- summary %>%
+    pivot_wider(names_from = country, values_from = years_available) %>%
+    arrange(variable) %>%
+    mutate(across(
+      c("Czech Republic", "France", "Netherlands", "Hungary"),
+      ~ case_when(
+        . == paste(2000:2024, collapse = ", ") ~ "2000-2024",
+        . == paste(2000:2023, collapse = ", ") ~ "2000-2023",
+        TRUE ~ .
+      )
+    ))
+  
+  # Merge with question text
+  question_text <- read_excel("H:/TWIN4DEM/v-dem question texts.xlsx", sheet = sheet_name)
+  
+  summary_wide <- summary_wide %>%
+    left_join(question_text %>% select(variable, question), by = "variable") %>%
+    relocate(question, .after = label)
+  
+  return(summary_wide)
+}
+
+# Load original V-Dem data and labels
+data <- read_dta("H:/TWIN4DEM/V-Dem-CY-Full+Others-v15.dta")
+labels_df <- data.frame(
+  variable = names(var_label(data)),
+  label = unlist(var_label(data)),
+  stringsAsFactors = FALSE
+)
 country_lookup <- data.frame(
   country_id = c(157, 76, 91, 210),
   country = c("Czech Republic", "France", "Netherlands", "Hungary")
 )
 
-### Filter  time frame
-# EX
-filtered_data_ex <- `V-Dem-CY-Full+Others-v15` %>%
-  filter(country_id %in% country_lookup$country_id, year >= 2000, year <= 2024) %>%
-  select(country_id, country_name, year, all_of(relevant_vars_ex)) %>%
-  left_join(country_lookup, by = "country_id") %>%
-  select(country, year, all_of(relevant_vars_ex))
-
-# Regime
-filtered_data_reg <- `V-Dem-CY-Full+Others-v15` %>%
-  filter(country_id %in% country_lookup$country_id, year >= 2000, year <= 2024) %>%
-  select(country_id, country_name, year, all_of(relevant_vars_reg)) %>%
-  left_join(country_lookup, by = "country_id") %>%
-  select(country, year, all_of(relevant_vars_reg))
-
-# Legislature
-filtered_data_leg <- `V-Dem-CY-Full+Others-v15` %>%
-  filter(country_id %in% country_lookup$country_id, year >= 2000, year <= 2024) %>%
-  select(country_id, country_name, year, all_of(relevant_vars_leg)) %>%
-  left_join(country_lookup, by = "country_id") %>%
-  select(country, year, all_of(relevant_vars_leg))
-
-# judiciary
-filtered_data_ju <- `V-Dem-CY-Full+Others-v15` %>%
-  filter(country_id %in% country_lookup$country_id, year >= 2000, year <= 2024) %>%
-  select(country_id, country_name, year, all_of(relevant_vars_ju)) %>%
-  left_join(country_lookup, by = "country_id") %>%
-  select(country, year, all_of(relevant_vars_ju))
-
-# dem indices
-filtered_data_dem <- `V-Dem-CY-Full+Others-v15` %>%
-  filter(country_id %in% country_lookup$country_id, year >= 2000, year <= 2024) %>%
-  select(country_id, country_name, year, all_of(relevant_vars_dem)) %>%
-  left_join(country_lookup, by = "country_id") %>%
-  select(country, year, all_of(relevant_vars_dem))
-
-### Clean column types for relevant variables
-# Ex
-cleaned_data_ex <- filtered_data_ex %>%
-  mutate(across(all_of(relevant_vars_ex), as.character)) 
-# Reg
-cleaned_data_reg <- filtered_data_reg %>%
-  mutate(across(all_of(relevant_vars_reg), as.character)) 
-# Leg
-cleaned_data_leg <- filtered_data_leg %>%
-  mutate(across(all_of(relevant_vars_leg), as.character)) 
-
-# Ju
-cleaned_data_ju <- filtered_data_ju %>%
-  mutate(across(all_of(relevant_vars_ju), as.character)) 
-
-# Dem
-cleaned_data_dem <- filtered_data_dem %>%
-  mutate(across(all_of(relevant_vars_dem), as.character)) 
-
-### Pivot longer
-# Ex
-long_data_ex <- cleaned_data_ex %>%
-  pivot_longer(
-    cols = all_of(relevant_vars_ex),
-    names_to = "variable",
-    values_to = "value"
-  ) %>%
-  arrange(country, variable, year)
-
-# Reg
-long_data_reg <- cleaned_data_reg %>%
-  pivot_longer(
-    cols = all_of(relevant_vars_reg),
-    names_to = "variable",
-    values_to = "value"
-  ) %>%
-  arrange(country, variable, year)
-
-# Leg
-long_data_leg <- cleaned_data_leg %>%
-  pivot_longer(
-    cols = all_of(relevant_vars_leg),
-    names_to = "variable",
-    values_to = "value"
-  ) %>%
-  arrange(country, variable, year)
-
-# Ju
-long_data_ju <- cleaned_data_ju %>%
-  pivot_longer(
-    cols = all_of(relevant_vars_ju),
-    names_to = "variable",
-    values_to = "value"
-  ) %>%
-  arrange(country, variable, year)
-
-# Dem
-long_data_dem <- cleaned_data_dem %>%
-  pivot_longer(
-    cols = all_of(relevant_vars_dem),
-    names_to = "variable",
-    values_to = "value"
-  ) %>%
-  arrange(country, variable, year)
-
-### Summary Table, variables as rows
-# Ex
-summary_table_ex <- long_data_ex %>%
-  filter(!is.na(value) & value != "") %>%  # Keep only non-missing values
-  group_by(country, variable) %>%
-  summarise(
-    years_available = paste(sort(unique(year)), collapse = ", "),
-    .groups = "drop"
-  ) %>%
-  arrange(country, variable)
-
-# Reg
-summary_table_reg <- long_data_reg %>%
-  filter(!is.na(value) & value != "") %>%  # Keep only non-missing values
-  group_by(country, variable) %>%
-  summarise(
-    years_available = paste(sort(unique(year)), collapse = ", "),
-    .groups = "drop"
-  ) %>%
-  arrange(country, variable)
-
-# Leg
-summary_table_leg <- long_data_leg %>%
-  filter(!is.na(value) & value != "") %>%  # Keep only non-missing values
-  group_by(country, variable) %>%
-  summarise(
-    years_available = paste(sort(unique(year)), collapse = ", "),
-    .groups = "drop"
-  ) %>%
-  arrange(country, variable)
-
-# Ju
-summary_table_ju <- long_data_ju %>%
-  filter(!is.na(value) & value != "") %>%  # Keep only non-missing values
-  group_by(country, variable) %>%
-  summarise(
-    years_available = paste(sort(unique(year)), collapse = ", "),
-    .groups = "drop"
-  ) %>%
-  arrange(country, variable)
-
-# Dem
-summary_table_dem <- long_data_dem %>%
-  filter(!is.na(value) & value != "") %>%  # Keep only non-missing values
-  group_by(country, variable) %>%
-  summarise(
-    years_available = paste(sort(unique(year)), collapse = ", "),
-    .groups = "drop"
-  ) %>%
-  arrange(country, variable)
-
-### Adding labels
-var_labels <- var_label(`V-Dem-CY-Full+Others-v15`)  # this keeps names and labels
-labels_df <- data.frame(
-  variable = names(var_labels),
-  label = unlist(var_labels),
-  stringsAsFactors = FALSE
+# Process all groups
+summary_tables <- purrr::imap(
+  variable_groups,
+  ~ process_group(.x$prefix, .x$sheet, data, labels_df, country_lookup)
 )
 
-# Ex
-summary_table_ex <- summary_table_ex %>%
-  left_join(labels_df, by = "variable") %>%
-  select(country, variable, label, years_available)
-
-# Reg
-summary_table_reg <- summary_table_reg %>%
-  left_join(labels_df, by = "variable") %>%
-  select(country, variable, label, years_available)
-
-# Reg
-summary_table_leg <- summary_table_leg %>%
-  left_join(labels_df, by = "variable") %>%
-  select(country, variable, label, years_available)
-
-# Ju
-summary_table_ju <- summary_table_ju %>%
-  left_join(labels_df, by = "variable") %>%
-  select(country, variable, label, years_available)
-
-# Dem
-summary_table_dem <- summary_table_dem %>%
-  left_join(labels_df, by = "variable") %>%
-  select(country, variable, label, years_available)
-
-### Wide
-# Ex
-summary_table_wide_ex <- summary_table_ex %>%
-  select(country, variable, label, years_available) %>%
-  pivot_wider(
-    names_from = country,
-    values_from = years_available
-  ) %>%
-  arrange(variable) %>%
-  mutate(across(
-    c("Czech Republic", "France", "Netherlands", "Hungary"),
-    ~ ifelse(
-      . == paste(2000:2024, collapse = ", "),
-      "2000-2024",
-      .
-    )
-  ))  %>%
-  mutate(across(
-    c("Czech Republic", "France", "Netherlands", "Hungary"),
-    ~ ifelse(
-      . == paste(2000:2023, collapse = ", "),
-      "2000-2023",
-      .
-    )
-  ))
-
-
-# Reg
-summary_table_wide_reg <- summary_table_reg %>%
-  select(country, variable, label, years_available) %>%
-  pivot_wider(
-    names_from = country,
-    values_from = years_available
-  ) %>%
-  arrange(variable) %>%
-  mutate(across(
-    c("Czech Republic", "France", "Netherlands", "Hungary"),
-    ~ ifelse(
-      . == paste(2000:2024, collapse = ", "),
-      "2000-2024",
-      .
-    )
-  ))  %>%
-  mutate(across(
-    c("Czech Republic", "France", "Netherlands", "Hungary"),
-    ~ ifelse(
-      . == paste(2000:2023, collapse = ", "),
-      "2000-2023",
-      .
-    )
-  ))
-
-# Leg
-summary_table_wide_leg <- summary_table_leg %>%
-  select(country, variable, label, years_available) %>%
-  pivot_wider(
-    names_from = country,
-    values_from = years_available
-  ) %>%
-  arrange(variable) %>%
-  mutate(across(
-    c("Czech Republic", "France", "Netherlands", "Hungary"),
-    ~ ifelse(
-      . == paste(2000:2024, collapse = ", "),
-      "2000-2024",
-      .
-    )
-  ))  %>%
-  mutate(across(
-    c("Czech Republic", "France", "Netherlands", "Hungary"),
-    ~ ifelse(
-      . == paste(2000:2023, collapse = ", "),
-      "2000-2023",
-      .
-    )
-  ))
-
-# Ju
-summary_table_wide_ju <- summary_table_ju %>%
-  select(country, variable, label, years_available) %>%
-  pivot_wider(
-    names_from = country,
-    values_from = years_available
-  ) %>%
-  arrange(variable) %>%
-  mutate(across(
-    c("Czech Republic", "France", "Netherlands", "Hungary"),
-    ~ ifelse(
-      . == paste(2000:2024, collapse = ", "),
-      "2000-2024",
-      .
-    )
-  ))  %>%
-  mutate(across(
-    c("Czech Republic", "France", "Netherlands", "Hungary"),
-    ~ ifelse(
-      . == paste(2000:2023, collapse = ", "),
-      "2000-2023",
-      .
-    )
-  ))
-
-
-# Dem
-summary_table_wide_dem <- summary_table_dem %>%
-  select(country, variable, label, years_available) %>%
-  pivot_wider(
-    names_from = country,
-    values_from = years_available
-  ) %>%
-  arrange(variable) %>%
-  mutate(across(
-    c("Czech Republic", "France", "Netherlands", "Hungary"),
-    ~ ifelse(
-      . == paste(2000:2024, collapse = ", "),
-      "2000-2024",
-      .
-    )
-  ))  %>%
-  mutate(across(
-    c("Czech Republic", "France", "Netherlands", "Hungary"),
-    ~ ifelse(
-      . == paste(2000:2023, collapse = ", "),
-      "2000-2023",
-      .
-    )
-  ))
-
-
-### merge with question text excel
-# Ex
-question_texts_ex <- read_excel("H:/TWIN4DEM/v-dem question texts.xlsx", sheet = "Executive")
-
-summary_table_wide_ex <- summary_table_wide_ex %>%
-  left_join(
-    question_texts_ex %>% select(variable, question),
-    by = "variable"
-  ) %>%
-  relocate(question, .after = label)
-
-# Reg
-question_texts_reg <- read_excel("H:/TWIN4DEM/v-dem question texts.xlsx", sheet = "Regime")
-
-summary_table_wide_reg <- summary_table_wide_reg %>%
-  left_join(
-    question_texts_reg %>% select(variable, question),
-    by = "variable"
-  ) %>%
-  relocate(question, .after = label)
-
-# Leg
-question_texts_leg <- read_excel("H:/TWIN4DEM/v-dem question texts.xlsx", sheet = "Legislature")
-
-summary_table_wide_leg <- summary_table_wide_leg %>%
-  left_join(
-    question_texts_leg %>% select(variable, question),
-    by = "variable"
-  ) %>%
-  relocate(question, .after = label)
-
-# Ju
-question_texts_ju <- read_excel("H:/TWIN4DEM/v-dem question texts.xlsx", sheet = "Judiciary")
-
-summary_table_wide_ju <- summary_table_wide_ju %>%
-  left_join(
-    question_texts_ju %>% select(variable, question),
-    by = "variable"
-  ) %>%
-  relocate(question, .after = label)
-
-
-# Dem
-question_texts_dem <- read_excel("H:/TWIN4DEM/v-dem question texts.xlsx", sheet = "Democracy Indices (V-Dem)")
-
-summary_table_wide_dem <- summary_table_wide_dem %>%
-  left_join(
-    question_texts_dem %>% select(variable, question),
-    by = "variable"
-  ) %>%
-  relocate(question, .after = label)
-
-
-
-
-### Writing into Excel Table
-# write_xlsx(
-#   list(Executive = summary_table_wide_ex, 
-#        Regime = summary_table_wide_reg,
-#        Legislature = summary_table_wide_leg,
-#        Judiciary = summary_table_wide_ju,
-#        'Democracy Indices (V-Dem)' = summary_table_wide_dem),
-#   path = "H:/TWIN4DEM/v-dem.xlsx"
-# )
-
-### Writing into excel table, adjustable format
-# Create a new workbook
 wb <- createWorkbook()
 
-# List of all sheets and data frames
-sheet_list <- list(
-  Executive = summary_table_wide_ex,
-  Regime = summary_table_wide_reg,
-  Legislature = summary_table_wide_leg,
-  Judiciary = summary_table_wide_ju,
-  `Democracy Indices (V-Dem)` = summary_table_wide_dem
-)
-
-# Loop through each sheet and add to workbook
-for (sheet_name in names(sheet_list)) {
-  df <- sheet_list[[sheet_name]]
-  
+for (sheet_name in names(summary_tables)) {
   addWorksheet(wb, sheet_name)
-  writeData(wb, sheet = sheet_name, x = df)
-  
-  # Auto-adjust column widths
-  setColWidths(wb, sheet = sheet_name, cols = 1:ncol(df), widths = "auto")
+  writeData(wb, sheet = sheet_name, summary_tables[[sheet_name]])
+  setColWidths(wb, sheet = sheet_name, cols = 1:ncol(summary_tables[[sheet_name]]), widths = "auto")
 }
 
-# Save workbook
 saveWorkbook(wb, "H:/TWIN4DEM/v-dem.xlsx", overwrite = TRUE)
+
