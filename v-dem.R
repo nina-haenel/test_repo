@@ -177,7 +177,7 @@ country_lookup_vparty <- data.frame(
 # Function for processing V-Party data
 process_vparty <- function(data, labels_df, country_lookup) {
   
-  # Use *all* variables
+  # Use all variables
   relevant_vars <- names(data)
   
   # Filter, keep years 2000-2024
@@ -194,7 +194,7 @@ process_vparty <- function(data, labels_df, country_lookup) {
       cols = setdiff(names(filtered), c("country", "year")),
       names_to = "variable", 
       values_to = "value",
-      values_transform = list(value = as.character)   # 🔑 here
+      values_transform = list(value = as.character)   
     ) %>%
     filter(!is.na(value) & value != "") %>%
     arrange(country, variable, year)
@@ -226,11 +226,187 @@ process_vparty <- function(data, labels_df, country_lookup) {
 # Run processing
 summary_vparty <- process_vparty(df_vparty, labels_df_vparty, country_lookup_vparty)
 
+# Load curated questions Excel
+questions <- read_excel("H:/TWIN4DEM/v-party_question_texts.xlsx")
+
+# Merge on variable
+merged <- summary_vparty %>%
+  left_join(questions, by = "variable", suffix = c("", "_curated")) %>%
+  mutate(
+    label   = coalesce(label_curated, label),       # prefer curated, else original
+    question = coalesce(question_curated, question) # prefer curated, else original
+  ) %>%
+  select(-label_curated, -question_curated) %>%     # clean up
+  relocate(label, question, .after = variable)
+
 # Write to Excel (single sheet)
 wb_vparty <- createWorkbook()
 addWorksheet(wb_vparty, "V-Party")
-writeData(wb_vparty, sheet = "V-Party", summary_vparty)
-setColWidths(wb_vparty, sheet = "V-Party", cols = 1:ncol(summary_vparty), widths = "auto")
+writeData(wb_vparty, sheet = "V-Party", merged)
+setColWidths(wb_vparty, sheet = "V-Party", cols = 1:ncol(merged), widths = "auto")
 
 # Save file
 saveWorkbook(wb_vparty, "H:/TWIN4DEM/v-party.xlsx", overwrite = TRUE)
+
+
+
+
+##### MANIFESTO ################################################################
+#manifesto <- read_excel("H:/TWIN4DEM/MPDataset_MPDS2024a.xlsx")
+manifesto_df <- read_dta("H:/TWIN4DEM/MPDataset_MPDS2024a_stata14.dta")
+
+var_labels <- tibble(
+  variable = names(manifesto_df),
+  label = sapply(manifesto_df, function(x) attr(x, "label"))
+)
+
+# Define countries of interest
+country_lookup <- data.frame(
+  countryname = c("Czech Republic", "France", "Netherlands", "Hungary")
+)
+
+process_manifesto <- function(data, var_labels, country_lookup) {
+  
+  # Create numeric year from 'date' (YYYYMM)
+  data <- data %>%
+    mutate(year = floor(date / 100)) %>%
+    filter(countryname %in% country_lookup$country, year >= 2000, year <= 2024)
+  
+  # Identify all variables to summarize
+  exclude_cols <- c("countryname", "party", "partyname", "edate", "date", "year", "partyid")
+  relevant_vars <- setdiff(names(data), exclude_cols)
+  
+  # Pivot longer
+  long <- data %>%
+    pivot_longer(
+      cols = all_of(relevant_vars),
+      names_to = "variable",
+      values_to = "value",
+      values_transform = list(value = as.character)
+    ) %>%
+    filter(!is.na(value) & value != "") %>%
+    arrange(countryname, variable, year)
+  
+  # Summarize years available
+  summary <- long %>%
+    group_by(countryname, variable) %>%
+    summarise(years_available = paste(sort(unique(year)), collapse = ", "), .groups = "drop") %>%
+    left_join(var_labels, by = "variable") %>%
+    select(countryname, variable, label, years_available)
+  
+  # Pivot wider so each country is a column
+  summary_wide <- summary %>%
+    pivot_wider(names_from = countryname, values_from = years_available) %>%
+    arrange(variable)
+  
+  return(summary_wide)
+}
+# -----------------------------
+# Run processing
+# -----------------------------
+summary_manifesto <- process_manifesto(manifesto_df, var_labels, country_lookup)
+
+# -----------------------------
+# Write to Excel
+# -----------------------------
+wb <- createWorkbook()
+addWorksheet(wb, "Manifesto")
+writeData(wb, sheet = "Manifesto", summary_manifesto)
+setColWidths(wb, sheet = "Manifesto", cols = 1:ncol(summary_manifesto), widths = "auto")
+saveWorkbook(wb, "H:/TWIN4DEM/manifesto_coverage.xlsx", overwrite = TRUE)
+
+
+### PARTY FACTS ################################################################
+## TO BE UPDATED! --------------------------------------------------------------
+# download and read Party Facts mapping table
+file_name <- 'partyfacts-mapping.csv'
+if( ! file_name %in% list.files())
+  url <- 'https://partyfacts.herokuapp.com/download/external-parties-csv/'
+download.file(url, file_name)
+partyfacts <- read.csv(file_name, as.is=TRUE)  # maybe conversion of character encoding
+
+# -----------------------------
+# Define countries of interest
+# -----------------------------
+# Note: use ISO codes as in PartyFacts ("CZE", "FRA", etc.)
+countries <- c("CZE", "FRA", "NLD", "HUN")
+
+partyfacts_filtered <- partyfacts %>% filter(country %in% countries)
+
+# -----------------------------
+# Identify variables to summarize
+# -----------------------------
+# Keep 'share_year' as temporal info
+exclude_cols <- c("partyfacts_id", "name", "country", "dataset_key", "share_year")
+relevant_vars <- setdiff(names(partyfacts_filtered), exclude_cols)
+
+# -----------------------------
+# Pivot longer
+# -----------------------------
+long <- partyfacts_filtered %>%
+  pivot_longer(
+    cols = all_of(relevant_vars),
+    names_to = "variable",
+    values_to = "value",
+    values_transform = list(value = as.character)
+  ) %>%
+  filter(!is.na(value) & value != "" & !is.na(share_year) & share_year >= 2000 & share_year <= 2024) %>%
+  arrange(country, variable)
+
+# -----------------------------
+# Summarize temporal coverage by variable and country
+# -----------------------------
+summary <- long %>%
+  group_by(country, variable) %>%
+  summarise(
+    years_available = paste(sort(unique(share_year)), collapse = ", "),
+    .groups = "drop"
+  )
+
+# -----------------------------
+# Pivot wider so each country is a column
+# -----------------------------
+summary_wide <- summary %>%
+  pivot_wider(names_from = country, values_from = years_available) %>%
+  arrange(variable)
+
+# -----------------------------
+# Optional: add labels if you have a small lookup
+# If not, just duplicate variable names
+summary_wide <- summary_wide %>%
+  mutate(label = variable, .before = 2)
+
+# -----------------------------
+# Write to Excel
+# -----------------------------
+wb <- createWorkbook()
+addWorksheet(wb, "PartyFacts")
+writeData(wb, sheet = "PartyFacts", summary_wide)
+setColWidths(wb, sheet = "PartyFacts", cols = 1:ncol(summary_wide), widths = "auto")
+saveWorkbook(wb, "H:/TWIN4DEM/partyfacts_coverage.xlsx", overwrite = TRUE)
+
+
+###
+core_parties <- read_csv("H:/TWIN4DEM/partyfacts-core-parties.csv")
+
+external_parties <- read_csv("H:/TWIN4DEM/partyfacts-external-parties.csv")
+
+# download and read Party Facts mapping table
+file_name <- "partyfacts-mapping.csv"
+if( ! file_name %in% list.files()) {
+  url <- "https://partyfacts.herokuapp.com/download/external-parties-csv/"
+  download.file(url, file_name)
+}
+partyfacts_raw <- read_csv(file_name, guess_max = 50000)
+partyfacts <- partyfacts_raw |> filter(! is.na(partyfacts_id))
+
+# link datasets (select only linked parties)
+dataset_1 <- partyfacts |> filter(dataset_key == "manifesto")
+dataset_2 <- partyfacts |> filter(dataset_key == "parlgov")
+link_table <-
+  dataset_1 |>
+  inner_join(dataset_2, by = c("partyfacts_id" = "partyfacts_id"))
+
+# write results into file with dataset names in file name
+file_out <- "partyfacts-linked.csv"
+write_csv(link_table, file_out)
